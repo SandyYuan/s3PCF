@@ -212,7 +212,10 @@ def interp_odens(pos, odens_field, params):
 
 
 # this is the main method, call this to run this whole program
-def calc_bias(whichsim, design, params, dist_nbins = 30, whatseed = 0, rsd = True):
+def calc_bias(whichsim, pos_ful, pair_data, params, dist_nbins = 30, whatseed = 0, rsd = True):
+    # pos_ful has to be three columns in Mpc, from 0 to L_box
+    # pair_data has to be seven columns
+    # x (Mpc), y (Mpc), z (Mpc), dist (Mpc), id1, id2, mhalo (Msun)
     print "Calculating bias. Realization: ", whichsim
 
     M_cut, M1, sigma, alpha, kappa, A = design
@@ -220,21 +223,24 @@ def calc_bias(whichsim, design, params, dist_nbins = 30, whatseed = 0, rsd = Tru
     datadir = "./data"
     if rsd:
         datadir = datadir+"_rsd"
-    savedir = datadir+"/rockstar_"+str(M_cut)[0:4]+"_"+str(M1)[0:4]+"_"+str(sigma)[0:4]+"_"+str(alpha)[0:4]+"_"+str(kappa)[0:4]+"_"+str(A)
+    #savedir = datadir+"/rockstar_"+str(M_cut)[0:4]+"_"+str(M1)[0:4]+"_"+str(sigma)[0:4]+"_"+str(alpha)[0:4]+"_"+str(kappa)[0:4]+"_"+str(A)
+    savedir = datadir+"/newdata"
     if rsd:
         savedir = savedir+"_rsd"
     # if we are doing repeats, save them in separate directories
     if not whatseed == 0:
         savedir = savedir+"_"+str(whatseed)
 
+    """
     # load the galaxy and pair catalog
     print "Loading pair/galaxy catalogs...", whichsim
     pos_full = np.fromfile(savedir+"/halos_gal_full_pos_"+str(whichsim))
     pair_data = np.fromfile(savedir+"/halos_pairs_full_"+str(whichsim)+"_maxdist"+str(int(params['maxdist'])))
     pos_full = np.array(np.reshape(pos_full, (-1, 3))) / params['Lbox'] - 0.5 # relative unit
     pair_data = np.array(np.reshape(pair_data, (-1, 7)))
+    """
 
-
+    # convert to box units from -0.5 to 0.5
     pos_pairs = pair_data[:,0:3] / params['Lbox'] - 0.5
     dist_pairs = pair_data[:,3] / params['Lbox']
     gal_ids = pair_data[:,4:]
@@ -245,11 +251,6 @@ def calc_bias(whichsim, design, params, dist_nbins = 30, whatseed = 0, rsd = Tru
     # cast the gal distribution onto a 3D grid using TSC
     gal_grid = cast_TSC(pos_full, Ngrid)
     Ngals = np.sum(gal_grid)
-
-    # check that the TSC algorithm conserves the total galaxy count
-    print "Check if TSC conserves galaxy counts:"
-    print "Galaxy count:", len(pos_full)
-    print "Galaxy count after TSC:", Ngals
 
     # calculate window function and its fft
     print "Setting up window function and its fft..."
