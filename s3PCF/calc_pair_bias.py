@@ -57,27 +57,6 @@ def cast_TSC(pos_array, gridsize = Ngrid):
     # call PSm which is done in C++, within Abacus
     return PSm.CalculateTSC(pos_array, gridsize, boxsize)
 
-######## convolve the gridded galaxy pair distribution with a window function
-# for gaussian-sigmoid
-
-# rsd
-gauss_sig = 50 # cell length, Mpc
-r0cell = 35 # cell length, Mpc 
-s0 = 0.5 # Mpc^ -1
-# for sigmoid-exp
-cutoff = 20 # Mpc
-
-"""
-# no rsd
-gauss_sig = 30 # cell length, Mpc
-r0cell = 20 # cell length, Mpc 
-s0 = 0.8 # Mpc^ -1
-# for sigmoid-exp
-cutoff = 10 # Mpc
-"""
-wtype = "_gauss_sigmoid"
-wparams = "_"+str(int(gauss_sig))+"_"+str(int(r0cell))+"_"+str(int(s0*10))+"_"+str(int(cutoff))
-
 # define window function, ready to convolve with galaxy grid
 def gauss(x, y, z, sigx, sigy, sigz):
     return np.exp(-0.5*(x**2/sigx**2+y**2/sigy**2+z**2/sigz**2))
@@ -88,7 +67,17 @@ def sigmoid(x, y, z, r0, s):
     # r0 is the radius of the hole in the middle
     return 1.0/(1+np.exp(-s*(np.sqrt(x**2 + y**2) - r0)))
 
-def window_gauss_sigmoid(x, y, z, params):
+def window_gauss_sigmoid(x, y, z, params, rsd):
+    if rsd:
+        gauss_sig = 50 # cell length, Mpc
+        r0cell = 35 # cell length, Mpc 
+        s0 = 0.5 # Mpc^ -1
+        cutoff = 20 # Mpc
+    else:
+        gauss_sig = 30 # cell length, Mpc
+        r0cell = 20 # cell length, Mpc 
+        s0 = 0.8 # Mpc^ -1
+        cutoff = 10 # Mpc 
     sigx = gauss_sig / params['Lbox'] # 20 Mpc
     sigy = gauss_sig / params['Lbox']
     sigz = gauss_sig / params['Lbox']
@@ -217,13 +206,14 @@ def calc_bias(whichsim, pos_ful, pair_data, params, dist_nbins = 30, whatseed = 
     # pair_data has to be seven columns
     # x (Mpc), y (Mpc), z (Mpc), dist (Mpc), id1, id2, mhalo (Msun)
     print "Calculating bias. Realization: ", whichsim
-
+    
+    """
     M_cut, M1, sigma, alpha, kappa, A = design
     
     datadir = "./data"
     if rsd:
         datadir = datadir+"_rsd"
-    #savedir = datadir+"/rockstar_"+str(M_cut)[0:4]+"_"+str(M1)[0:4]+"_"+str(sigma)[0:4]+"_"+str(alpha)[0:4]+"_"+str(kappa)[0:4]+"_"+str(A)
+    savedir = datadir+"/rockstar_"+str(M_cut)[0:4]+"_"+str(M1)[0:4]+"_"+str(sigma)[0:4]+"_"+str(alpha)[0:4]+"_"+str(kappa)[0:4]+"_"+str(A)
     savedir = datadir+"/newdata"
     if rsd:
         savedir = savedir+"_rsd"
@@ -231,7 +221,7 @@ def calc_bias(whichsim, pos_ful, pair_data, params, dist_nbins = 30, whatseed = 
     if not whatseed == 0:
         savedir = savedir+"_"+str(whatseed)
 
-    """
+
     # load the galaxy and pair catalog
     print "Loading pair/galaxy catalogs...", whichsim
     pos_full = np.fromfile(savedir+"/halos_gal_full_pos_"+str(whichsim))
@@ -250,21 +240,23 @@ def calc_bias(whichsim, pos_ful, pair_data, params, dist_nbins = 30, whatseed = 
     # calculate galaxy bias 
     # cast the gal distribution onto a 3D grid using TSC
     gal_grid = cast_TSC(pos_full, Ngrid)
-    Ngals = np.sum(gal_grid)
+    Ngals = len(pos_full)
 
     # calculate window function and its fft
     print "Setting up window function and its fft..."
     start = time.time()
     # check for window function directory
     wdir = "./windows"
+    if rsd:
+        wdir = wdir+"_rsd"
     if not os.path.exists(wdir):
         os.makedirs(wdir)
-    wfft_filename = wdir+"/wfft"+wparams
+    wfft_filename = wdir+"/wfft"
     # if file doesnt exist, calculate the fft, but if it does, just load file
     if os.path.isfile(wfft_filename):
         W_fft = np.load(wfft_filename)
     else:
-        W_grid = window_gauss_sigmoid(x_grid, y_grid, z_grid, params)
+        W_grid = window_gauss_sigmoid(x_grid, y_grid, z_grid, params, rsd)
         # normalize window function
         W_grid_norm = W_grid/np.sum(W_grid)
         # fft the window function
@@ -291,8 +283,10 @@ def calc_bias(whichsim, pos_ful, pair_data, params, dist_nbins = 30, whatseed = 
     # create bins for dist_los and dist_trans
     bins_los = np.linspace(0,params['maxdist']/params['Lbox'],num=dist_nbins + 1)
     bins_trans = np.linspace(0,params['maxdist']/params['Lbox']/3,num=dist_nbins + 1)
+    bins_trans_lo = bins_trans[:-1]
+    bins_trans_hi = bins_trans[1:]
     # open a file to store bias results
-    filename = savedir+"/data"+wtype+"_"+str(dist_nbins)+"_"+str(dist_nbins)+"_ilos_itrans_bpair"+wparams+"_maxdist"+str(int(params['maxdist']))+"_sim"+str(whichsim)+".txt"
+    filename = "./data_"+str(dist_nbins)+"_"+str(dist_nbins)+"_ilos_itrans_maxdist"+str(int(params['maxdist']))+"_sim"+str(whichsim)+".txt"
     f = open(filename,'w')
     f.write("%s \n" % (b_gals))
     f.close()
@@ -321,12 +315,38 @@ def calc_bias(whichsim, pos_ful, pair_data, params, dist_nbins = 30, whatseed = 
                 odens_all_pairs[i] = interp_odens(pos_pairs_sub[i], delta_gal, params)
             # average b_pair averaged over all pairs
             b_pair = np.mean(odens_all_pairs)
-            # output
+
+            # compute the 2PCF so that we can compute the Qeff
+            ndens = Ngals/params['Lbox']**3 # per mpc^3
+            del_d_los = abs(np.mean(np.diff(bins_los)))
+            del_A = np.pi*(bins_trans_hi[itrans]**2 - bins_trans_lo[itrans]**2)
+            n_expected = del_A*2*del_d_los*ndens
+            gal_corr = npairs/n_expected/(Ngals/2.0) - 1.0
+
+            # the bpg
+            bpg = bpairs/bgals
+
+            # correction term that depends on maxdist
+            if params['maxdist'] == 10:
+                galcorr_dw = 0.362
+            elif params['maxdist'] == 30:
+                galcorr_dw = 0.104
+            else:
+                galcorr_dw = 0
+                print "galcorr_dw is unknown for this maxdist."
+
+            # compute the Qeff
+            Qeff = ((1+gal_corr)*bpg - 2 - galcorr_dw/(2*gal_corr))/\
+            (2*gal_corr + 1.5*galcorr_dw)
+
+            # output bpg
             if b_pair/b_gals < 1:
-                print "bin: ", ilos, itrans, ", b_pair = ", b_pair, ", Number of pairs: ", np.sum(tot_mask)
+                print "bin: ", ilos, itrans, ", bpg = ", bpg, ", Number of pairs: ", np.sum(tot_mask)
             f = open(filename, 'a')
-            f.write("%s %s %s %s \n" % (ilos, itrans, b_pair, np.sum(tot_mask)))
+            f.write("%s %s %s %s %s \n" % (ilos, itrans, bpg, Qeff, np.sum(tot_mask)))
             f.close()
+
+
 
 
 
