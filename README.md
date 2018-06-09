@@ -1,4 +1,4 @@
-# GRAND-HOD: GeneRalized ANd Differentiable Halo Occupation Distribution
+# s3PCF: a package for computing the 3PCF in the squeezed limit
 
 ## Authors:
 Sihan (Sandy) Yuan, Daniel Eisenstein & Lehman Garrison
