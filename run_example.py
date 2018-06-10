@@ -3,7 +3,7 @@
 import numpy as np
 import os,sys
 
-import calc_pair_bias as calcbias
+from s3PCF import calc_pair_bias as calcbias
 
 # constants
 params = {}
@@ -33,7 +33,7 @@ params['rsd'] = rsd
 whichsim = 0
 
 # the data directory 
-datadir = "../../gal_profile/data"
+datadir = "../gal_profile/data"
 if rsd:
     datadir = datadir+"_rsd"
 savedir = datadir+"/rockstar_"+str(M_cut)[0:4]+"_"+str(M1)[0:4]+"_"+str(sigma)[0:4]+"_"+str(alpha)[0:4]+"_"+str(kappa)[0:4]+"_"+str(A)
