@@ -2,6 +2,7 @@
 
 """
 Code for computing the galaxy 3-point correlation function in the squeezed limit.
+For description of the procedure can be found https://arxiv.org/abs/1705.03464.
 
 Add to .bashrc:
 export PYTHONPATH="/path/to/s3PCF:$PYTHONPATH"
@@ -35,37 +36,132 @@ grid_each_z = 0.5*(bins[0:-1] + bins[1:])
 grid_each_x1 = np.concatenate((grid_each_x[Ngrid/2:], grid_each_x[:Ngrid/2]))
 grid_each_y1 = np.concatenate((grid_each_y[Ngrid/2:], grid_each_y[:Ngrid/2]))
 grid_each_z1 = np.concatenate((grid_each_z[Ngrid/2:], grid_each_z[:Ngrid/2]))
-x_grid, y_grid, z_grid = np.meshgrid(grid_each_x1, grid_each_y1, grid_each_z1, indexing='ij')
+x_grid, y_grid, z_grid = np.meshgrid(grid_each_x1, grid_each_y1, grid_each_z1, 
+    indexing='ij')
 
-# method that takes in pos_full, gal_ids, dist_pairs and returns 
-# the los separation (z) and transverse separation (x, y)
-def decomp_dist(pos_full, gal_ids, dist_pairs, params):
+def decomp_dist(pos_full, gal_ids, params):
+    """
+    method that takes in pos_full, gal_ids, dist_pairs and returns 
+    the los separation (z) and transverse separation (x, y)
+
+    Parameters
+    ----------
+    pos_full : numpy.array
+        Array of galaxy positions of shape (N, 3).
+
+    gal_ids : numpy.array
+        Array of galaxy indices of shape (N, 2). The two columns correspond 
+        to the two galaxies in a pair. 
+        
+    params : dict
+        Dictionary of simulation parameters. 
+
+    Returns
+    -------
+    diff_pos_los : numpy.array
+        Array of pair separations along the line of sight.
+
+    diff_pos_trans : numpy.array
+        Array of pair separations perpendicular to the line of sight.
+
+    """
+
     ids1 = gal_ids[:,0].astype(int)
     ids2 = gal_ids[:,1].astype(int)
     gal_pos1 = pos_full[ids1]
     gal_pos2 = pos_full[ids2]
-    diff_pos = gal_pos1 - gal_pos2 # x, y, z
+    diff_pos = gal_pos1 - gal_pos2 
+
     # calculate los distance and transverse distance
     diff_pos_los = np.absolute(diff_pos[:,2])
     diff_pos_trans = np.sqrt(diff_pos[:,0]**2+diff_pos[:,1]**2)
+
     return diff_pos_los, diff_pos_trans
 
-# method that creats the TSC density field
 def cast_TSC(pos_array, gridsize = Ngrid):
+    """
+    method that casts an array of 3D positions onto a TSC grid.
+
+    Parameters
+    ----------
+    pos_array : numpy.array
+        Array of galaxy positions of shape (N, 3).
+
+    gridsize : int
+        Size of the grid on each side, default set to 512. 
+
+    Returns
+    -------
+    PSm.CalculateTSC(pos_array, gridsize, boxsize): numpy.array
+        The TSC grid. 
+
+    """
+
     return PSm.CalculateTSC(pos_array, gridsize, boxsize)
 
-# define window function, ready to convolve with galaxy grid
 def gauss(x, y, z, sigx, sigy, sigz):
+    """
+    method that returns a custom gaussian centered on the origin.
+
+    Parameters
+    ----------
+    x, y, z : float
+        Input coordinates.
+
+    sigx, sigy, sigz : float
+        Width of the Gaussian in all 3 directions. 
+
+    Returns
+    -------
+    the value of the Gaussian
+
+    """
     return np.exp(-0.5*(x**2/sigx**2+y**2/sigy**2+z**2/sigz**2))
 
-# sigmoid function
 def sigmoid(x, y, z, r0, s):
-    # s is slope
-    # r0 is the radius of the hole in the middle
+    """
+    method that returns a custom sigmoid.
+
+    Parameters
+    ----------
+    x, y, z : float
+        Input coordinates.
+
+    r0 : float
+        The central location of the sigmoid.
+
+    s : float
+        The slope of the sigmoid. 
+
+    Returns
+    -------
+    the value of the sigmoid
+
+    """
     return 1.0/(1+np.exp(-s*(np.sqrt(x**2 + y**2) - r0)))
 
 def window_gauss_sigmoid(x, y, z, params, rsd):
+    """
+    method that builds a gaussian-sigmoid window function.
 
+    Parameters
+    ----------
+    x, y, z : float
+        Input coordinates.
+
+    params : dict
+        Dictionary of simulation parameters. 
+
+    rsd : boolean
+        Flag 'True' if we are invoking RSD. 
+
+    Returns
+    -------
+    The value of the window function
+
+    """
+
+    # if we invoke RSD, then we construct a larger window function 
     if rsd:
         gauss_sig = 50 # cell length, Mpc
         r0cell = 35 # cell length, Mpc 
@@ -83,11 +179,39 @@ def window_gauss_sigmoid(x, y, z, params, rsd):
     part_gauss = gauss(x, y, z, sigx, sigy, sigz)
     r0 = r0cell/params['Lbox']
     part_sigmoid = sigmoid(x, y, z, r0, s0*params['Lbox'])
+    # we are also introducing a cutoff that cleans up the cavity 
+    # in the middle. 
     part_turnoff = np.sqrt(x**2 + y**2) > cutoff / params['Lbox']
     return part_gauss*part_sigmoid*part_turnoff
 
-# function that convolves gal density field with W function using explicit fft
 def gal_convolve_W(gal_grid, W_fft, params, saveout = False):
+    """
+    method that convolves the galaxy density field with the window function
+    using explicit FFTs.
+
+    Parameters
+    ----------
+    gal_grid : numpy.array
+        The galaxy density field. 
+
+    W_fft : numpy.array
+        The FFT of the window function. 
+
+    params : dict
+        Dictionary of simulation parameters. 
+
+    saveout : boolean
+        Flag 'True' if we are saving the output. 
+
+    Returns
+    -------
+    gal_grid_convolved : numpy.array
+        The convolved galaxy density field.
+
+    gal_fft : numpy.array
+        The FFT of the galaxy density field. 
+
+    """
 
     # do convolution by explict ffts
     print "Starting Convolution (manual)..."
@@ -107,8 +231,34 @@ def gal_convolve_W(gal_grid, W_fft, params, saveout = False):
         np.save(datadir+'/gal_grid_fft', gal_fft)
     return gal_grid_convolved, gal_fft
 
-# function that convolves pair density field with W function using explicit fft
 def pair_convolve_W(pair_grid, W_fft, params, saveout = False):
+    """
+    method that convolves the galaxy density field with the window function
+    using explicit FFTs.
+
+    Parameters
+    ----------
+    gal_grid : numpy.array
+        The galaxy density field. 
+
+    W_fft : numpy.array
+        The FFT of the window function. 
+
+    params : dict
+        Dictionary of simulation parameters. 
+
+    saveout : boolean
+        Flag 'True' if we are saving the output. 
+
+    Returns
+    -------
+    gal_grid_convolved : numpy.array
+        The convolved galaxy density field.
+
+    gal_fft : numpy.array
+        The FFT of the galaxy density field. 
+
+    """
 
     # do convolution by explict ffts
     print "Starting Convolution (manual)..."
@@ -128,10 +278,27 @@ def pair_convolve_W(pair_grid, W_fft, params, saveout = False):
         np.save(datadir+'/pair_grid_fft', pair_fft)
     return pair_grid_convolved, pair_fft
 
-# function that takes in a position and a overdensity field
-# and then returns an interpolated overdensity at that position
 def interp_odens(pos, odens_field, params):
-    
+    """
+    method that function that takes in a position and a overdensity field
+    and then returns an interpolated overdensity at that position.
+
+    Parameters
+    ----------
+    pos : numpy.array
+        The 3D position to be interpolated.  
+
+    odens_field : numpy.array
+        The overdensity field. 
+
+    params : dict
+        Dictionary of simulation parameters. 
+
+    Returns
+    -------
+    The interpolated value at the position specified by pos. 
+
+    """
     x, y, z = pos
 
     # find the nearerest elements
@@ -171,45 +338,60 @@ def interp_odens(pos, odens_field, params):
 
     return tot_dens/tot_dist
 
+def calc_qeff(whichsim, pos_full, pair_data, params, 
+    dist_nbins = 30, whatseed = 0, rsd = True):
+    """
+    main method that computes the galaxy pair bias and the squeezed 3PCF.
 
-# this is the main method, call this to run this whole program
-def calc_qeff(whichsim, pos_full, pair_data, params, dist_nbins = 30, whatseed = 0, rsd = True):
+    Parameters
+    ----------
+    whichsim : int
+        Which of the simulation boxes we are computing for. 
+
+    pos_full : numpy.array
+        Array of galaxy positions of shape (N, 3).
+
+    pair_data : numpy.array
+        Array of pair data containing the following seven columns:
+        x (Mpc), y (Mpc), z (Mpc), dist (Mpc), id1, id2, mhalo (Msun)
+        The ids are the galaxy id number of the two galaxies in the pair. 
+
+    params : dict
+        Dictionary of simulation parameters. 
+
+    dist_nbins : int
+        Number of bins in pair separation along the parallel and 
+        perpendicular direction. 
+
+    whatseed : int
+        The seed to the random number generator. 
+
+    rsd : boolean
+        Flag 'True' if we are invoking RSD. 
+
+    Outputs
+    -------
+    Save a text file that contains the following columns:
+    ilos, itrans, bpg, Qeff, npairs
+
+    ilos   : the bin index along the line of sight.
+    itrans : the bin index perpendicular to the line of sight. 
+    bpg    : the pair-galaxy bias for the bin. 
+    Qeff   : the squeezed 3PCF for the bin.
+    npairs : the number of pairs in the bin. 
+
+    """
+
     # pos_ful has to be three columns in Mpc, from 0 to L_box
-    # pair_data has to be seven columns
-    # x (Mpc), y (Mpc), z (Mpc), dist (Mpc), id1, id2, mhalo (Msun)
     print "Calculating bias. Realization: ", whichsim
-    
-    """
-    M_cut, M1, sigma, alpha, kappa, A = design
-    
-    datadir = "./data"
-    if rsd:
-        datadir = datadir+"_rsd"
-    savedir = datadir+"/rockstar_"+str(M_cut)[0:4]+"_"+str(M1)[0:4]+"_"+str(sigma)[0:4]+"_"+str(alpha)[0:4]+"_"+str(kappa)[0:4]+"_"+str(A)
-    savedir = datadir+"/newdata"
-    if rsd:
-        savedir = savedir+"_rsd"
-    # if we are doing repeats, save them in separate directories
-    if not whatseed == 0:
-        savedir = savedir+"_"+str(whatseed)
-
-
-    # load the galaxy and pair catalog
-    print "Loading pair/galaxy catalogs...", whichsim
-    pos_full = np.fromfile(savedir+"/halos_gal_full_pos_"+str(whichsim))
-    pair_data = np.fromfile(savedir+"/halos_pairs_full_"+str(whichsim)+"_maxdist"+str(int(params['maxdist'])))
-    pos_full = np.array(np.reshape(pos_full, (-1, 3))) / params['Lbox'] - 0.5 # relative unit
-    pair_data = np.array(np.reshape(pair_data, (-1, 7)))
-    """
 
     # convert to box units from -0.5 to 0.5
     pos_pairs = pair_data[:,0:3] / params['Lbox'] - 0.5
     dist_pairs = pair_data[:,3] / params['Lbox']
     gal_ids = pair_data[:,4:]
     # decompose the pair separation into a los component and a trans component
-    dist_los, dist_trans = decomp_dist(pos_full, gal_ids, dist_pairs, params)
+    dist_los, dist_trans = decomp_dist(pos_full, gal_ids, params)
 
-    # calculate galaxy bias 
     # cast the gal distribution onto a 3D grid using TSC
     gal_grid = cast_TSC(pos_full, Ngrid)
     Ngals = len(pos_full)
@@ -235,13 +417,11 @@ def calc_qeff(whichsim, pos_full, pair_data, params, dist_nbins = 30, whatseed =
         W_grid_norm = W_grid/np.sum(W_grid)
         # fft the window function
         W_fft = np.fft.rfftn(W_grid_norm)
-        # now lets save the W_fft and just load it everytime we need it, so we dont calculate this for all the sims
         np.save(wfft_filename, W_fft)
 
     print "Time elapsed: ", time.time() - start
     
     # convolve the post tsc grid with the window function
-    # should make separate methods for gals and pairs
     gal_grid_convolved, gal_fft = gal_convolve_W(gal_grid, W_fft, params)
 
     print "Calculating galaxy bias..."
@@ -254,13 +434,17 @@ def calc_qeff(whichsim, pos_full, pair_data, params, dist_nbins = 30, whatseed =
     print "b_gals = ", b_gals
 
     # create bins for dist_los and dist_trans
-    bins_los = np.linspace(0,params['maxdist']/params['Lbox'],num=dist_nbins + 1)
-    bins_trans = np.linspace(0,params['maxdist']/params['Lbox']/3,num=dist_nbins + 1)
+    bins_los = np.linspace(0,params['maxdist']/params['Lbox'],
+        num=dist_nbins + 1)
+    bins_trans = np.linspace(0,params['maxdist']/params['Lbox']/3,
+        num=dist_nbins + 1)
     bins_trans_lo = bins_trans[:-1]
     bins_trans_hi = bins_trans[1:]
 
     # open a file to store outputs
-    filename = "./data_"+str(dist_nbins)+"_"+str(dist_nbins)+"_ilos_itrans_maxdist"+str(int(params['maxdist']))+"_sim"+str(whichsim)+".txt"
+    filename = "./data_"+str(dist_nbins)+"_"+str(dist_nbins)
+    +"_ilos_itrans_maxdist"+str(int(params['maxdist']))+"_sim"+str(whichsim)
+    +".txt"
     f = open(filename,'w')
     f.write("%s \n" % (b_gals))
     f.close()
@@ -270,7 +454,8 @@ def calc_qeff(whichsim, pos_full, pair_data, params, dist_nbins = 30, whatseed =
         for itrans in range(0, dist_nbins):
             # find the indices of all the pairs that fall within this dist bin
             masks_los = [dist_los > bins_los[ilos], dist_los < bins_los[ilos+1]]
-            masks_trans = [dist_trans > bins_trans[itrans], dist_trans < bins_trans[itrans+1]]
+            masks_trans = [dist_trans > bins_trans[itrans], 
+                           dist_trans < bins_trans[itrans+1]]
             allmasks = masks_los + masks_trans
             tot_mask = reduce(np.logical_and, allmasks)
             tot_mask = np.array(tot_mask)
@@ -283,11 +468,12 @@ def calc_qeff(whichsim, pos_full, pair_data, params, dist_nbins = 30, whatseed =
             dist_pairs_sub = dist_pairs[tot_mask]
             gal_ids_sub = gal_ids[tot_mask]
 
-            # calculating average overdensity of pairs, averaged over pair positions
+            # calculating average overdensity of pairs
             # calculate the list of odens at all pairs
             odens_all_pairs = np.zeros(len(pos_pairs_sub))
             for i in range(0, len(pos_pairs_sub)):
-                odens_all_pairs[i] = interp_odens(pos_pairs_sub[i], delta_gal, params)
+                odens_all_pairs[i] = interp_odens(pos_pairs_sub[i], 
+                                                    delta_gal, params)
             # average b_pair averaged over all pairs
             b_pair = np.mean(odens_all_pairs)
 
@@ -298,7 +484,7 @@ def calc_qeff(whichsim, pos_full, pair_data, params, dist_nbins = 30, whatseed =
             n_expected = del_A*2*del_d_los*ndens
             gal_corr = npairs/n_expected/(Ngals/2.0) - 1.0
 
-            # the bpg
+            # compute the bpg
             bpg = b_pair/b_gals
 
             # correction term that depends on maxdist
@@ -314,9 +500,13 @@ def calc_qeff(whichsim, pos_full, pair_data, params, dist_nbins = 30, whatseed =
             Qeff = ((1+gal_corr)*bpg - 2 - galcorr_dw/(2*gal_corr))/\
             (2*gal_corr + 1.5*galcorr_dw)
 
-            # output bpg and Qeff 
+            # output data
             f = open(filename, 'a')
-            f.write("%s %s %s %s %s \n" % (ilos, itrans, bpg, Qeff, np.sum(tot_mask)))
+            f.write("%s %s %s %s %s \n" % (ilos, 
+                                           itrans, 
+                                           bpg,
+                                           Qeff, 
+                                           np.sum(tot_mask)))
             f.close()
             
 
