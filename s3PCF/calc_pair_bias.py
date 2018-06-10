@@ -1,30 +1,30 @@
-#allsims testhod
+#!/usr/bin/env python
+
+"""
+Code for computing the galaxy 3-point correlation function in the squeezed limit.
+
+Add to .bashrc:
+export PYTHONPATH="/path/to/s3PCF:$PYTHONPATH"
+
+"""
+
 import numpy as np
 import math
 import os,sys
 import random
 import time
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as pl
-import matplotlib.cm as cm
-import matplotlib.colors as colors
-from matplotlib import rc, rcParams
-rcParams.update({'font.size': 20})
-from mpl_toolkits.mplot3d import Axes3D
 from astropy.table import Table
 import astropy.io.fits as pf
 from astropy.cosmology import WMAP9 as cosmo
-import multiprocessing
-from multiprocessing import Pool
 import scipy.spatial as spatial
 from scipy import signal
 from scipy.interpolate import RegularGridInterpolator
 import PowerSpectrum_mod as PSm
 
+# size of the box in box units. By definition, it is 1. 
 boxsize = 1.0
 
-# define grid
+# construct grid for FFTs, Ngrid controls the size of the grid
 Ngrid = 512
 bin_width = boxsize/Ngrid
 bins = np.linspace(-boxsize/2.0, boxsize/2.0, num = Ngrid + 1)
@@ -50,11 +50,8 @@ def decomp_dist(pos_full, gal_ids, dist_pairs, params):
     diff_pos_trans = np.sqrt(diff_pos[:,0]**2+diff_pos[:,1]**2)
     return diff_pos_los, diff_pos_trans
 
-
-######## cast the galaxy pair distribution onto a grid using TSC
 # method that creats the TSC density field
 def cast_TSC(pos_array, gridsize = Ngrid):
-    # call PSm which is done in C++, within Abacus
     return PSm.CalculateTSC(pos_array, gridsize, boxsize)
 
 # define window function, ready to convolve with galaxy grid
@@ -68,6 +65,7 @@ def sigmoid(x, y, z, r0, s):
     return 1.0/(1+np.exp(-s*(np.sqrt(x**2 + y**2) - r0)))
 
 def window_gauss_sigmoid(x, y, z, params, rsd):
+
     if rsd:
         gauss_sig = 50 # cell length, Mpc
         r0cell = 35 # cell length, Mpc 
@@ -78,6 +76,7 @@ def window_gauss_sigmoid(x, y, z, params, rsd):
         r0cell = 20 # cell length, Mpc 
         s0 = 0.8 # Mpc^ -1
         cutoff = 10 # Mpc 
+
     sigx = gauss_sig / params['Lbox'] # 20 Mpc
     sigy = gauss_sig / params['Lbox']
     sigz = gauss_sig / params['Lbox']
@@ -88,7 +87,7 @@ def window_gauss_sigmoid(x, y, z, params, rsd):
     return part_gauss*part_sigmoid*part_turnoff
 
 # function that convolves gal density field with W function using explicit fft
-def gal_convolve_W(gal_grid, W_fft, params, saveout = False, makeplots = False):
+def gal_convolve_W(gal_grid, W_fft, params, saveout = False):
 
     # do convolution by explict ffts
     print "Starting Convolution (manual)..."
@@ -98,9 +97,6 @@ def gal_convolve_W(gal_grid, W_fft, params, saveout = False, makeplots = False):
 
     gal_grid_convolved = np.fft.irfftn(gal_fft*W_fft, gal_grid.shape)
     print "Convolution done, time elapsed: ", time.time() - start
-    print "Check if galaxy count is conserved:"
-    print "Galaxy count before convolution:", np.sum(gal_grid)
-    print "Galaxy count after convolution:", np.sum(gal_grid_convolved)
 
     # save the convolved fields
     if saveout:
@@ -109,20 +105,10 @@ def gal_convolve_W(gal_grid, W_fft, params, saveout = False, makeplots = False):
             datadir = datadir+'_rsd'
         np.save(datadir+'/gal_grid_convolved_manual', gal_grid_convolved)
         np.save(datadir+'/gal_grid_fft', gal_fft)
-    # make plots
-    if makeplots:
-        fig = pl.figure(1)
-        pl.clf()
-        pl.imshow(gal_grid_convolved[0])
-        pl.colorbar()
-        plotdir = "./plots"
-        if params['rsd']:
-            plotdir = plotdir + "_rsd"
-        fig.savefig(plotdir+"/plot_gal_convolved_manual_slice.png")
     return gal_grid_convolved, gal_fft
 
 # function that convolves pair density field with W function using explicit fft
-def pair_convolve_W(pair_grid, W_fft, params, saveout = False, makeplots = False):
+def pair_convolve_W(pair_grid, W_fft, params, saveout = False):
 
     # do convolution by explict ffts
     print "Starting Convolution (manual)..."
@@ -140,24 +126,10 @@ def pair_convolve_W(pair_grid, W_fft, params, saveout = False, makeplots = False
             datadir = datadir+'_rsd'
         np.save(datadir+'/pair_grid_convolved_manual', pair_grid_convolved)
         np.save(datadir+'/pair_grid_fft', pair_fft)
-    # make plots
-    if makeplots:
-        fig = pl.figure(2)
-        pl.clf()
-        pl.imshow(pair_grid_convolved[0])
-        plotdir = "./plots"
-        if params['rsd']:
-            plotdir = plotdir + "_rsd"
-        fig.savefig(plotdir+"/plot_pair_convolved_manual_slice.png")
     return pair_grid_convolved, pair_fft
 
-######### calculate pair/galaxy bias ratio
-# calculate galaxy overdensity at each galaxy/pair location
-# For galaxy: we average over all grid points, weighted by the unconvolved field.
-# For pairs: we average over pairs, with overdensities interpolated between the nearest cells.
-
 # function that takes in a position and a overdensity field
-# and then returns a interpolated overdensity at that position
+# and then returns an interpolated overdensity at that position
 def interp_odens(pos, odens_field, params):
     
     x, y, z = pos
@@ -201,7 +173,7 @@ def interp_odens(pos, odens_field, params):
 
 
 # this is the main method, call this to run this whole program
-def calc_bias(whichsim, pos_ful, pair_data, params, dist_nbins = 30, whatseed = 0, rsd = True):
+def calc_qeff(whichsim, pos_full, pair_data, params, dist_nbins = 30, whatseed = 0, rsd = True):
     # pos_ful has to be three columns in Mpc, from 0 to L_box
     # pair_data has to be seven columns
     # x (Mpc), y (Mpc), z (Mpc), dist (Mpc), id1, id2, mhalo (Msun)
@@ -252,10 +224,12 @@ def calc_bias(whichsim, pos_ful, pair_data, params, dist_nbins = 30, whatseed = 
     if not os.path.exists(wdir):
         os.makedirs(wdir)
     wfft_filename = wdir+"/wfft"
+    print os.path.isfile(wfft_filename+".npy")
     # if file doesnt exist, calculate the fft, but if it does, just load file
-    if os.path.isfile(wfft_filename):
-        W_fft = np.load(wfft_filename)
+    if os.path.isfile(wfft_filename+".npy"):
+        W_fft = np.load(wfft_filename+".npy")
     else:
+        print "building window function and its FFT"
         W_grid = window_gauss_sigmoid(x_grid, y_grid, z_grid, params, rsd)
         # normalize window function
         W_grid_norm = W_grid/np.sum(W_grid)
@@ -279,13 +253,13 @@ def calc_bias(whichsim, pos_ful, pair_data, params, dist_nbins = 30, whatseed = 
     b_gals = np.sum(delta_gal*gal_grid)/np.sum(gal_grid)
     print "b_gals = ", b_gals
 
-    # calculate pair bias
     # create bins for dist_los and dist_trans
     bins_los = np.linspace(0,params['maxdist']/params['Lbox'],num=dist_nbins + 1)
     bins_trans = np.linspace(0,params['maxdist']/params['Lbox']/3,num=dist_nbins + 1)
     bins_trans_lo = bins_trans[:-1]
     bins_trans_hi = bins_trans[1:]
-    # open a file to store bias results
+
+    # open a file to store outputs
     filename = "./data_"+str(dist_nbins)+"_"+str(dist_nbins)+"_ilos_itrans_maxdist"+str(int(params['maxdist']))+"_sim"+str(whichsim)+".txt"
     f = open(filename,'w')
     f.write("%s \n" % (b_gals))
@@ -300,6 +274,7 @@ def calc_bias(whichsim, pos_ful, pair_data, params, dist_nbins = 30, whatseed = 
             allmasks = masks_los + masks_trans
             tot_mask = reduce(np.logical_and, allmasks)
             tot_mask = np.array(tot_mask)
+            npairs = np.sum(tot_mask) # number of pairs in this bin
             # if the sub sample is empty, skip
             if np.sum(tot_mask) == 0:
                 continue
@@ -324,7 +299,7 @@ def calc_bias(whichsim, pos_ful, pair_data, params, dist_nbins = 30, whatseed = 
             gal_corr = npairs/n_expected/(Ngals/2.0) - 1.0
 
             # the bpg
-            bpg = bpairs/bgals
+            bpg = b_pair/b_gals
 
             # correction term that depends on maxdist
             if params['maxdist'] == 10:
@@ -339,14 +314,11 @@ def calc_bias(whichsim, pos_ful, pair_data, params, dist_nbins = 30, whatseed = 
             Qeff = ((1+gal_corr)*bpg - 2 - galcorr_dw/(2*gal_corr))/\
             (2*gal_corr + 1.5*galcorr_dw)
 
-            # output bpg
-            if b_pair/b_gals < 1:
-                print "bin: ", ilos, itrans, ", bpg = ", bpg, ", Number of pairs: ", np.sum(tot_mask)
+            # output bpg and Qeff 
             f = open(filename, 'a')
             f.write("%s %s %s %s %s \n" % (ilos, itrans, bpg, Qeff, np.sum(tot_mask)))
             f.close()
-
-
+            
 
 
 
